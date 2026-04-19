@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeteoEnsemble · GEFS + IFS ENS</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg:     #0c1118;
+      --surf:   #141b24;
+      --surf2:  #1a2232;
+      --surf3:  #202c3e;
+      --border: #253044;
+      --text:   #cdd9e5;
+      --muted:  #6e8399;
+      --gefs:   #58a6e6;
+      --ecmwf:  #56d364;
+      --combo:  #e3b341;
+      --danger: #e06b6b;
+      --warn:   #e3b341;
+      --fd: 'Syne', sans-serif;
+      --fb: 'DM Sans', sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: var(--fb); height: 100dvh;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* ── HEADER ── */
+    header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 14px; background: var(--surf);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0; flex-wrap: wrap; row-gap: 5px; z-index: 1000;
+    }
+    .logo { font-family: var(--fd); font-weight: 800; font-size: 1rem; color: var(--gefs); letter-spacing: -.02em; }
+    .logo em { color: var(--text); font-style: normal; }
+    .logo-sub { font-size: .67rem; color: var(--muted); margin-top: 1px; }
+
+    .mselector { display: flex; gap: 4px; }
+    .mbtn {
+      display: flex; align-items: center; gap: 5px;
+      padding: 4px 11px; border-radius: 20px;
+      border: 1.5px solid var(--border); background: transparent;
+      color: var(--muted); font-family: var(--fd); font-weight: 600;
+      font-size: .7rem; cursor: pointer; transition: all .15s; white-space: nowrap;
+    }
+    .mbtn .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .mbtn[data-m="gefs"]     .dot { background: var(--gefs); }
+    .mbtn[data-m="ecmwf"]    .dot { background: var(--ecmwf); }
+    .mbtn[data-m="combined"] .dot { background: var(--combo); }
+    .mbtn[data-m="gefs"].active     { border-color: var(--gefs);  color: var(--gefs);  background: rgba(88,166,230,.1); }
+    .mbtn[data-m="ecmwf"].active    { border-color: var(--ecmwf); color: var(--ecmwf); background: rgba(86,211,100,.1); }
+    .mbtn[data-m="combined"].active { border-color: var(--combo); color: var(--combo); background: rgba(227,179,65,.1); }
+    .mbtn:hover:not(.active) { border-color: var(--text); color: var(--text); }
+
+    #hint {
+      margin-left: auto; font-size: .68rem; color: var(--muted); padding: 3px 9px;
+      border-radius: 20px; border: 1px solid var(--border);
+      background: rgba(255,255,255,.03);
+      animation: pulse 2.8s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ── MAP ── */
+    main { flex: 1; overflow: hidden; }
+    #map { width: 100%; height: 100%; cursor: crosshair; }
+    .leaflet-container { background: #08111a; }
+    .leaflet-tile { filter: brightness(.75) saturate(.6); }
+
+    /* ── POPUP LEAFLET CUSTOM ── */
+    .leaflet-popup-content-wrapper {
+      background: var(--surf) !important;
+      border: 1px solid var(--border) !important;
+      border-radius: 12px !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,.6) !important;
+      padding: 0 !important;
+      min-width: 320px;
+      max-width: 360px;
+    }
+    .leaflet-popup-content {
+      margin: 0 !important;
+      width: 100% !important;
+    }
+    .leaflet-popup-tip-container { display: none; }
+    .leaflet-popup-close-button {
+      color: var(--muted) !important;
+      font-size: 18px !important;
+      padding: 6px 10px !important;
+      top: 4px !important; right: 4px !important;
+      z-index: 10;
+    }
+    .leaflet-popup-close-button:hover { color: var(--text) !important; }
+
+    /* ── POPUP INTERIOR ── */
+    .pu-wrap { display: flex; flex-direction: column; }
+
+    /* Cabecera del popup */
+    .pu-head {
+      padding: 12px 14px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .pu-loc { font-family: var(--fd); font-weight: 700; font-size: .95rem; padding-right: 22px; }
+    .pu-meta { font-size: .65rem; color: var(--muted); margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .pu-chip {
+      background: var(--surf2); border: 1px solid var(--border);
+      padding: 1px 7px; border-radius: 6px;
+    }
+    .pu-pill {
+      font-family: var(--fd); font-weight: 700; font-size: .63rem;
+      padding: 1px 8px; border-radius: 10px;
+    }
+    .pu-pill.gefs     { background: rgba(88,166,230,.12); color: var(--gefs);  border: 1px solid rgba(88,166,230,.3); }
+    .pu-pill.ecmwf    { background: rgba(86,211,100,.12); color: var(--ecmwf); border: 1px solid rgba(86,211,100,.3); }
+    .pu-pill.combined { background: rgba(227,179,65,.12); color: var(--combo); border: 1px solid rgba(227,179,65,.3); }
+
+    /* Pestañas de días */
+    .pu-tabs {
+      display: flex; overflow-x: auto; gap: 0;
+      border-bottom: 1px solid var(--border);
+      scrollbar-width: none;
+    }
+    .pu-tabs::-webkit-scrollbar { display: none; }
+    .pu-tab {
+      flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+      padding: 7px 10px 5px; cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all .15s; gap: 2px; min-width: 52px;
+    }
+    .pu-tab:hover { background: rgba(255,255,255,.04); }
+    .pu-tab.active { border-bottom-color: var(--gefs); }
+    .pu-tab.active.ecmwf-tab    { border-bottom-color: var(--ecmwf); }
+    .pu-tab.active.combined-tab { border-bottom-color: var(--combo); }
+    .tab-sym  { font-size: 1.2rem; line-height: 1; }
+    .tab-day  { font-family: var(--fd); font-weight: 600; font-size: .62rem; color: var(--muted); }
+    .tab-day.today { color: var(--gefs); }
+    .tab-temps{ font-size: .6rem; color: var(--muted); white-space: nowrap; }
+    .tab-temps .tx { color: var(--danger); font-weight: 600; }
+    .tab-temps .tn { color: var(--gefs); }
+
+    /* Contenido del día activo */
+    .pu-day-content { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+
+    /* Fila de resumen: símbolo grande + temps */
+    .day-summary { display: flex; align-items: center; gap: 12px; }
+    .day-sym-big { font-size: 2.8rem; line-height: 1; flex-shrink: 0; }
+    .day-sym-info { flex: 1; }
+    .day-sym-label { font-family: var(--fd); font-weight: 700; font-size: .9rem; }
+    .day-sym-date  { font-size: .7rem; color: var(--muted); margin-top: 2px; }
+    .day-temp-row  { display: flex; gap: 10px; margin-top: 4px; }
+    .tval { font-family: var(--fd); font-size: 1.3rem; font-weight: 700; }
+    .tval.tx { color: var(--danger); }
+    .tval.tn { color: var(--gefs); }
+    .tsub { font-size: .62rem; color: var(--muted); }
+
+    /* Sección */
+    .sec { display: flex; flex-direction: column; gap: 6px; }
+    .sec-title {
+      font-size: .62rem; font-weight: 600; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .07em;
+    }
+    .divider { height: 1px; background: var(--border); }
+
+    /* ── BARRA IC INTERACTIVA ── */
+    .ic-var { display: flex; flex-direction: column; gap: 4px; }
+    .ic-row  { display: flex; align-items: center; gap: 7px; }
+    .ic-icon { font-size: .85rem; width: 17px; text-align: center; flex-shrink: 0; }
+    .ic-label{ font-size: .7rem; color: var(--muted); width: 85px; flex-shrink: 0; }
+    .ic-val  { font-family: var(--fd); font-weight: 600; font-size: .84rem; min-width: 52px; }
+    .ic-unit { font-size: .65rem; color: var(--muted); font-weight: 300; }
+
+    /* La barra propiamente */
+    .ic-bar-wrap {
+      position: relative; height: 28px; cursor: crosshair;
+      margin: 0 2px;
+    }
+    /* Track de fondo */
+    .ic-track {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      left: 0; right: 0; height: 6px;
+      background: var(--surf3); border-radius: 3px; overflow: visible;
+    }
+    /* Rango IC95% */
+    .ic-range {
+      position: absolute; height: 100%; border-radius: 3px;
+      background: linear-gradient(90deg,rgba(88,166,230,.3),rgba(88,166,230,.65));
+      transition: left .4s ease, width .4s ease;
+    }
+    .ecmwf-ic    .ic-range { background: linear-gradient(90deg,rgba(86,211,100,.25),rgba(86,211,100,.6)); }
+    .combined-ic .ic-range { background: linear-gradient(90deg,rgba(227,179,65,.25),rgba(227,179,65,.6)); }
+    /* Rango IC80% (P10-P90) — más oscuro dentro */
+    .ic-range80 {
+      position: absolute; height: 100%; border-radius: 3px;
+      background: rgba(88,166,230,.55);
+      transition: left .4s ease, width .4s ease;
+    }
+    .ecmwf-ic    .ic-range80 { background: rgba(86,211,100,.5); }
+    .combined-ic .ic-range80 { background: rgba(227,179,65,.5); }
+    /* Línea de mediana */
+    .ic-median {
+      position: absolute; top: -5px; bottom: -5px;
+      width: 3px; border-radius: 2px;
+      background: var(--gefs);
+      transform: translateX(-50%);
+      transition: left .4s ease;
+      box-shadow: 0 0 4px rgba(88,166,230,.6);
+    }
+    .ecmwf-ic    .ic-median { background: var(--ecmwf); box-shadow: 0 0 4px rgba(86,211,100,.5); }
+    .combined-ic .ic-median { background: var(--combo); box-shadow: 0 0 4px rgba(227,179,65,.5); }
+    /* Etiquetas de eje */
+    .ic-axis {
+      display: flex; justify-content: space-between;
+      font-size: .58rem; color: var(--muted); margin-top: 1px; padding: 0 2px;
+    }
+    /* Tooltip al hover */
+    .ic-tooltip {
+      position: absolute; top: -28px; transform: translateX(-50%);
+      background: var(--surf3); border: 1px solid var(--border);
+      color: var(--text); font-size: .65rem; font-family: var(--fd); font-weight: 600;
+      padding: 2px 7px; border-radius: 6px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .1s;
+    }
+    .ic-bar-wrap:hover .ic-tooltip { opacity: 1; }
+
+    /* ── PROB BAR ── */
+    .pb-row  { display: flex; align-items: center; gap: 7px; }
+    .pb-label{ font-size: .69rem; color: var(--muted); width: 90px; flex-shrink: 0; }
+    .pb-track{ flex: 1; height: 5px; background: var(--surf3); border-radius: 3px; overflow: hidden; }
+    .pb-fill { height: 100%; border-radius: 3px; transition: width .5s ease; }
+    .pb-pct  { font-family: var(--fd); font-weight: 700; font-size: .74rem; width: 34px; text-align: right; }
+
+    /* ── LOADING SPINNER SOBRE EL MAPA ── */
+    #map-overlay {
+      position: absolute; inset: 0; z-index: 900;
+      display: none; align-items: center; justify-content: center;
+      background: rgba(12,17,24,.5); backdrop-filter: blur(2px);
+      flex-direction: column; gap: 12px; color: var(--muted); font-size: .85rem;
+    }
+    #map-overlay svg { animation: spin 1.1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── MARKER ── */
+    .mk { width: 13px; height: 13px; border-radius: 50%; border: 2px solid white; }
+    .mk.gefs     { background: var(--gefs);  box-shadow: 0 0 0 3px rgba(88,166,230,.4); }
+    .mk.ecmwf    { background: var(--ecmwf); box-shadow: 0 0 0 3px rgba(86,211,100,.4); }
+    .mk.combined { background: var(--combo); box-shadow: 0 0 0 3px rgba(227,179,65,.4); }
+
+    footer {
+      text-align: center; padding: 4px; font-size: .6rem; flex-shrink: 0;
+      color: var(--muted); border-top: 1px solid var(--border); background: var(--surf);
+    }
+    footer a { color: var(--gefs); text-decoration: none; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">Meteo<em>Ensemble</em></div>
+    <div class="logo-sub">Predicción probabilística · IC 95%</div>
+  </div>
+  <div class="mselector">
+    <button class="mbtn active" data-m="gefs"><span class="dot"></span>GEFS</button>
+    <button class="mbtn" data-m="ecmwf"><span class="dot"></span>IFS ENS</button>
+    <button class="mbtn" data-m="combined"><span class="dot"></span>Combinado</button>
+  </div>
+  <div id="hint">📍 Haz clic en el mapa</div>
+</header>
+
+<main style="position:relative">
+  <div id="map"></div>
+  <div id="map-overlay">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+      <circle cx="14" cy="14" r="10" stroke="var(--border)" stroke-width="2.5"/>
+      <path d="M14 4a10 10 0 0 1 10 10" stroke="var(--gefs)" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>
+    <span id="overlay-txt">Consultando ensemble…</span>
+  </div>
+</main>
+
+<footer>
+  Datos: <a href="https://dynamical.org" target="_blank">dynamical.org</a> ·
+  NOAA GEFS 31 mbrs · ECMWF IFS ENS 51 mbrs · CC BY 4.0
+</footer>
+
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────────
+const API_BASE = "http://localhost:8000";
+// Producción: const API_BASE = "https://TU-APP.onrender.com";
+
+const MODELS = {
+  gefs:     { label: "GEFS",      members: 31 },
+  ecmwf:    { label: "IFS ENS",   members: 51 },
+  combined: { label: "Combinado", members: 82 },
+};
+
+const SYM = {
+  sunny:        { e:"☀️",  t:"Despejado" },
+  partly_cloudy:{ e:"⛅",  t:"Parcialmente nublado" },
+  cloudy:       { e:"☁️",  t:"Nublado" },
+  drizzle:      { e:"🌦️", t:"Llovizna posible" },
+  rain:         { e:"🌧️", t:"Lluvia" },
+  heavy_rain:   { e:"🌧️", t:"Lluvia intensa" },
+  thunderstorm: { e:"⛈️", t:"Tormenta" },
+  snow:         { e:"❄️",  t:"Nieve" },
+  sleet:        { e:"🌨️", t:"Aguanieve" },
+};
+const getSym = k => SYM[k] || { e:"🌤️", t: k || "—" };
+
+const DAYS   = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+const MONTHS = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+const dateStr = iso => {
+  const d = new Date(iso + "T12:00:00Z");
+  return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+};
+
+let activeModel = "gefs";
+let activeLat = null, activeLon = null;
+let leafletMarker = null, leafletPopup = null;
+let currentForecast = null;   // datos cacheados del punto activo
+let activeTabIdx = 0;
+
+// ── MAPA ──────────────────────────────────────────────────────────────────
+const map = L.map("map", { center: [40, -3], zoom: 5 });
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: "© OSM © CARTO", subdomains: "abcd", maxZoom: 19,
+}).addTo(map);
+
+map.on("click", e => {
+  activeLat = e.latlng.lat;
+  activeLon = e.latlng.lng;
+  activeTabIdx = 0;
+  setMarker();
+  fetchForecast();
+});
+
+function setMarker() {
+  if (leafletMarker) map.removeLayer(leafletMarker);
+  leafletMarker = L.marker([activeLat, activeLon], {
+    icon: L.divIcon({
+      className: "",
+      html: `<div class="mk ${activeModel}"></div>`,
+      iconSize: [13,13], iconAnchor: [6.5,6.5],
+    })
+  }).addTo(map);
+}
+
+// ── SELECTOR MODELO ───────────────────────────────────────────────────────
+document.querySelectorAll(".mbtn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".mbtn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    activeModel = btn.dataset.m;
+    if (activeLat !== null) {
+      setMarker();
+      activeTabIdx = 0;
+      fetchForecast();
+    }
+  });
+});
+
+// ── FETCH ─────────────────────────────────────────────────────────────────
+async function fetchForecast() {
+  showOverlay(true);
+  const locName = await reverseGeocode(activeLat, activeLon);
+  try {
+    let data;
+    if (activeModel === "combined") {
+      data = await fetchCombined();
+    } else {
+      const r = await fetch(
+        `${API_BASE}/forecast?lat=${activeLat.toFixed(3)}&lon=${activeLon.toFixed(3)}&model=${activeModel}`
+      );
+      if (!r.ok) { const e = await r.json(); throw new Error(e.detail || `HTTP ${r.status}`); }
+      data = await r.json();
+    }
+    currentForecast = data;
+    showOverlay(false);
+    openPopup(data, locName);
+  } catch(e) {
+    showOverlay(false);
+    document.getElementById("hint").textContent = `❌ ${e.message}`;
+    setTimeout(() => document.getElementById("hint").textContent = "📍 Haz clic en el mapa", 4000);
+  }
+}
+
+async function fetchCombined() {
+  const [rG, rE] = await Promise.all([
+    fetch(`${API_BASE}/forecast?lat=${activeLat.toFixed(3)}&lon=${activeLon.toFixed(3)}&model=gefs`),
+    fetch(`${API_BASE}/forecast?lat=${activeLat.toFixed(3)}&lon=${activeLon.toFixed(3)}&model=ecmwf`),
+  ]);
+  if (!rG.ok || !rE.ok) throw new Error("Error al obtener datos combinados");
+  const [dG, dE] = await Promise.all([rG.json(), rE.json()]);
+
+  const ecmwfDates = new Set(dE.forecast.map(d => d.date));
+  const merged = dE.forecast.map(dayE => {
+    const dayG = dG.forecast.find(d => d.date === dayE.date);
+    return dayG ? mergeDays(dayE, dayG) : dayE;
+  });
+  const extraGefs = dG.forecast.filter(d => !ecmwfDates.has(d.date));
+
+  return {
+    status: "ok",
+    model_label: "GEFS + IFS ENS",
+    init_time: dE.init_time,
+    n_members: 82,
+    nearest_grid_point: dE.nearest_grid_point,
+    source: "dynamical.org",
+    forecast: [...merged, ...extraGefs],
+  };
+}
+
+function mergeDays(e, g) {
+  const nE = e.temp_max?.n || 51, nG = g.temp_max?.n || 31;
+  const wE = nE / (nE + nG), wG = 1 - wE;
+  const b  = (a, x) => (a != null && x != null) ? parseFloat((wE*a + wG*x).toFixed(3)) : (a ?? x);
+  const ms = (sE, sG) => {
+    if (!sE && !sG) return null;
+    if (!sE) return sG; if (!sG) return sE;
+    return { median:b(sE.median,sG.median), p025:b(sE.p025,sG.p025),
+             p975:b(sE.p975,sG.p975), p10:b(sE.p10,sG.p10),
+             p90:b(sE.p90,sG.p90), mean:b(sE.mean,sG.mean),
+             std:b(sE.std,sG.std), n:(sE.n||0)+(sG.n||0) };
+  };
+  const pp = wE*(e.precip_prob||0) + wG*(g.precip_prob||0);
+  return {
+    date: e.date, symbol: e.symbol,
+    temp_max:    ms(e.temp_max,  g.temp_max),
+    temp_min:    ms(e.temp_min,  g.temp_min),
+    precip_mm:   ms(e.precip_mm, g.precip_mm),
+    precip_prob: parseFloat(pp.toFixed(1)),
+    wind_max:    ms(e.wind_max,  g.wind_max),
+    wind_label:  e.wind_label || g.wind_label,
+    cloud_cover: ms(e.cloud_cover, g.cloud_cover),
+    rain_prob:   wE*(e.rain_prob||0)+wG*(g.rain_prob||0),
+    snow_prob:   wE*(e.snow_prob||0)+wG*(g.snow_prob||0),
+    thunder_prob:wE*(e.thunder_prob||0)+wG*(g.thunder_prob||0),
+  };
+}
+
+// ── REVERSE GEOCODE ───────────────────────────────────────────────────────
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
+      { headers: { "Accept-Language": "es" } }
+    );
+    const d = await r.json();
+    const a = d.address || {};
+    return a.city||a.town||a.village||a.county||a.state||d.display_name?.split(",")[0]||"Punto seleccionado";
+  } catch { return "Punto seleccionado"; }
+}
+
+// ── OVERLAY ───────────────────────────────────────────────────────────────
+function showOverlay(on) {
+  const ov = document.getElementById("map-overlay");
+  ov.style.display = on ? "flex" : "none";
+  document.getElementById("overlay-txt").textContent =
+    `Consultando ${MODELS[activeModel].label} (${MODELS[activeModel].members} mbrs)…`;
+  if (!on) document.getElementById("hint").textContent = "📍 Haz clic en el mapa";
+}
+
+// ── POPUP ─────────────────────────────────────────────────────────────────
+function openPopup(api, locName) {
+  if (leafletPopup) { map.closePopup(leafletPopup); leafletPopup = null; }
+
+  const init = new Date(api.init_time);
+  const initStr = init.toUTCString().slice(5,16) + " UTC";
+  const m = MODELS[activeModel];
+
+  // Construir HTML del popup
+  const html = `
+  <div class="pu-wrap">
+    <div class="pu-head">
+      <div class="pu-loc">${locName}</div>
+      <div class="pu-meta">
+        <span class="pu-pill ${activeModel}">${api.model_label} · ${api.n_members} mbrs</span>
+        <span class="pu-chip">Init: ${initStr}</span>
+        <span class="pu-chip">IC95% = P2.5–P97.5</span>
+      </div>
+    </div>
+    <div class="pu-tabs" id="pu-tabs">
+      ${api.forecast.map((day, i) => buildTab(day, i)).join("")}
+    </div>
+    <div id="pu-content"></div>
+  </div>`;
+
+  leafletPopup = L.popup({
+    maxWidth: 360,
+    minWidth: 320,
+    autoPan: true,
+    autoPanPaddingTopLeft:     L.point(20, 80),
+    autoPanPaddingBottomRight: L.point(20, 20),
+    closeButton: true,
+    className: "meteo-popup",
+  })
+  .setLatLng([activeLat, activeLon])
+  .setContent(html)
+  .openOn(map);
+
+  // Activar pestaña y ajustar vista una vez el popup tiene altura real
+  requestAnimationFrame(() => {
+    const root = leafletPopup?.getElement() || document;
+    selectTab(activeTabIdx, api);
+    root.querySelectorAll(".pu-tab").forEach((tab, i) => {
+      tab.addEventListener("click", () => {
+        activeTabIdx = i;
+        selectTab(i, api);
+      });
+    });
+
+    // Pan explícito tras render real del popup
+    requestAnimationFrame(() => {
+      const container = leafletPopup.getElement();
+      if (!container) return;
+      const rect    = container.getBoundingClientRect();
+      const mapRect = map.getContainer().getBoundingClientRect();
+      const headerH = document.querySelector("header")?.offsetHeight || 50;
+      const footerH = document.querySelector("footer")?.offsetHeight || 20;
+      const pad = 12;
+
+      const overTop    = mapRect.top + headerH + pad - rect.top;
+      const overBottom = rect.bottom - (mapRect.bottom - footerH - pad);
+
+      if (overTop > 0) {
+        map.panBy([0, -overTop], { animate: true, duration: 0.35 });
+      } else if (overBottom > 0) {
+        map.panBy([0, overBottom], { animate: true, duration: 0.35 });
+      }
+    });
+  });
+}
+
+function buildTab(day, idx) {
+  const sym  = getSym(day.symbol);
+  const tmax = day.temp_max?.median != null ? Math.round(day.temp_max.median) + "°" : "—";
+  const tmin = day.temp_min?.median != null ? Math.round(day.temp_min.median) + "°" : "—";
+  const date = new Date(day.date + "T12:00:00Z");
+  const dayName = idx === 0 ? "Hoy" : DAYS[date.getUTCDay()];
+  const today = idx === 0;
+  return `
+  <div class="pu-tab ${activeModel}-tab" data-idx="${idx}">
+    <div class="tab-sym">${sym.e}</div>
+    <div class="tab-day${today?" today":""}">${dayName}</div>
+    <div class="tab-temps"><span class="tx">${tmax}</span> <span class="tn">${tmin}</span></div>
+  </div>`;
+}
+
+function selectTab(idx, api) {
+  const root = leafletPopup?.getElement() || document;
+  root.querySelectorAll(".pu-tab").forEach((t, i) => {
+    t.classList.toggle("active", i === idx);
+  });
+  const day = api.forecast[idx];
+  const contentEl = root.querySelector("#pu-content");
+  if (contentEl) contentEl.innerHTML = buildDayContent(day, idx);
+}
+
+// ── CONTENIDO DEL DÍA ────────────────────────────────────────────────────
+function buildDayContent(day, idx) {
+  const sym  = getSym(day.symbol);
+  const tmax = day.temp_max?.median != null ? day.temp_max.median.toFixed(0) : "—";
+  const tmin = day.temp_min?.median != null ? day.temp_min.median.toFixed(0) : "—";
+  const label = idx === 0 ? "Hoy · " + dateStr(day.date) : dateStr(day.date);
+  const mc   = `${activeModel}-ic`;   // clase de color para IC
+
+  // Rango dinámico para temperatura: min(tmin.p025)-5 … max(tmax.p975)+5
+  const tLo = day.temp_min?.p025 != null ? Math.floor(day.temp_min.p025 - 5) : -10;
+  const tHi = day.temp_max?.p975 != null ? Math.ceil(day.temp_max.p975  + 5) : 45;
+
+  let h = `<div class="pu-day-content">`;
+
+  // ── Resumen ──
+  h += `<div class="day-summary">
+    <div class="day-sym-big">${sym.e}</div>
+    <div class="day-sym-info">
+      <div class="day-sym-label">${sym.t}</div>
+      <div class="day-sym-date">${label}</div>
+      <div class="day-temp-row">
+        <div><div class="tval tx">${tmax}°</div><div class="tsub">máx</div></div>
+        <div><div class="tval tn">${tmin}°</div><div class="tsub">mín</div></div>
+      </div>
+    </div>
+  </div>`;
+
+  h += `<div class="divider"></div>`;
+
+  // ── Temperatura ──
+  h += `<div class="sec"><div class="sec-title">Temperatura</div>`;
+  if (day.temp_max) h += icBar("🌡️", "Tmax", day.temp_max, "°C", tLo, tHi, mc);
+  if (day.temp_min) h += icBar("🌡️", "Tmin", day.temp_min, "°C", tLo, tHi, mc);
+  h += `</div><div class="divider"></div>`;
+
+  // ── Precipitación ──
+  h += `<div class="sec"><div class="sec-title">Precipitación</div>`;
+  if (day.precip_mm) {
+    const pLo = 0;
+    const pHi = Math.max(10, Math.ceil((day.precip_mm.p975 || 10) + 5));
+    h += icBar("💧", "Acumulada", day.precip_mm, "mm", pLo, pHi, mc);
+  }
+  if (day.precip_prob  != null) h += probBar("Prob. precip.",  day.precip_prob);
+  if (day.rain_prob    != null && day.rain_prob    > 0) h += probBar("Prob. lluvia",   day.rain_prob);
+  if (day.thunder_prob != null && day.thunder_prob > 0) h += probBar("Prob. tormenta", day.thunder_prob, "var(--combo)");
+  if (day.snow_prob    != null && day.snow_prob    > 0) h += probBar("Prob. nieve",    day.snow_prob,    "#90c0e0");
+  h += `</div><div class="divider"></div>`;
+
+  // ── Viento ──
+  const wlabel = day.wind_label || "Viento máx. 10m";
+  h += `<div class="sec"><div class="sec-title">${wlabel}</div>`;
+  if (day.wind_max) {
+    const wLo = 0;
+    const wHi = Math.max(40, Math.ceil((day.wind_max.p975 || 40) + 10));
+    h += icBar("💨", "Máx diario", day.wind_max, "km/h", wLo, wHi, mc);
+  }
+  h += `</div>`;
+
+  // ── Nubosidad ──
+  if (day.cloud_cover) {
+    h += `<div class="divider"></div>
+    <div class="sec"><div class="sec-title">Nubosidad</div>`;
+    h += icBar("☁️", "Media diaria", day.cloud_cover, "%", 0, 100, mc);
+    h += `</div>`;
+  }
+
+  // Miembros
+  const n = day.temp_max?.n;
+  if (n) h += `<div style="font-size:.6rem;color:var(--muted);text-align:right;margin-top:2px">${n} miembros del ensemble</div>`;
+
+  h += `</div>`;
+  return h;
+}
+
+// ── IC BAR INTERACTIVA ────────────────────────────────────────────────────
+// Rango dinámico: el usuario ve la escala real ± 5 unidades.
+// Hover muestra el valor interpolado en la posición del ratón.
+function icBar(icon, label, stats, unit, rMin, rMax, modelClass) {
+  if (!stats) return "";
+  const span = rMax - rMin || 1;
+  const pct  = v => v != null ? Math.max(0, Math.min(100, (v - rMin) / span * 100)) : 0;
+
+  const lP95 = pct(stats.p025), rP95 = pct(stats.p975), wP95 = Math.max(0, rP95 - lP95);
+  const lP80 = pct(stats.p10),  rP80 = pct(stats.p90),  wP80 = Math.max(0, rP80 - lP80);
+  const mPct = pct(stats.median);
+
+  // Etiquetas de eje: mín, mediana, máx
+  const axL = rMin.toFixed(rMin % 1 !== 0 ? 1 : 0);
+  const axM = stats.median != null ? stats.median.toFixed(1) : "—";
+  const axR = rMax.toFixed(rMax % 1 !== 0 ? 1 : 0);
+
+  // ID único para el tooltip
+  const uid = Math.random().toString(36).slice(2, 7);
+
+  return `
+  <div class="ic-var">
+    <div class="ic-row">
+      <div class="ic-icon">${icon}</div>
+      <div class="ic-label">${label}</div>
+      <div class="ic-val">${stats.median != null ? stats.median.toFixed(1) : "—"}<span class="ic-unit"> ${unit}</span></div>
+    </div>
+    <div class="ic-bar-wrap ${modelClass}"
+         data-min="${rMin}" data-max="${rMax}" data-unit="${unit}"
+         onmousemove="icHover(event,this)"
+         onmouseleave="icLeave(this)">
+      <div class="ic-tooltip" id="tt-${uid}">—</div>
+      <div class="ic-track">
+        <div class="ic-range"  style="left:${lP95}%;width:${wP95}%"></div>
+        <div class="ic-range80" style="left:${lP80}%;width:${wP80}%"></div>
+        <div class="ic-median" style="left:${mPct}%"></div>
+      </div>
+      <div class="ic-axis">
+        <span>${axL} ${unit}</span>
+        <span style="color:var(--text)">${axM} ${unit}</span>
+        <span>${axR} ${unit}</span>
+      </div>
+    </div>
+    <div style="font-size:.6rem;color:var(--muted);margin-top:1px">
+      IC95%: ${stats.p025?.toFixed(1)}–${stats.p975?.toFixed(1)} ${unit}
+      &nbsp;·&nbsp; IC80%: ${stats.p10?.toFixed(1)}–${stats.p90?.toFixed(1)} ${unit}
+      &nbsp;·&nbsp; σ=${stats.std?.toFixed(1)}
+    </div>
+  </div>`;
+}
+
+function icHover(e, el) {
+  const rect = el.getBoundingClientRect();
+  const pct  = (e.clientX - rect.left) / rect.width;
+  const rMin = parseFloat(el.dataset.min);
+  const rMax = parseFloat(el.dataset.max);
+  const val  = rMin + pct * (rMax - rMin);
+  const unit = el.dataset.unit;
+  const tt   = el.querySelector(".ic-tooltip");
+  if (!tt) return;
+  tt.textContent = `${val.toFixed(1)} ${unit}`;
+  // Centrar tooltip en posición del cursor pero dentro del contenedor
+  const leftPx = Math.max(20, Math.min(rect.width - 20, e.clientX - rect.left));
+  tt.style.left = leftPx + "px";
+}
+
+function icLeave(el) {
+  const tt = el.querySelector(".ic-tooltip");
+  if (tt) tt.style.opacity = "0";
+}
+
+// ── PROB BAR ──────────────────────────────────────────────────────────────
+function probBar(label, pct, forceColor) {
+  const w     = Math.min(100, Math.max(0, pct));
+  const color = forceColor || (pct > 70 ? "var(--danger)" : pct > 40 ? "var(--warn)" : "var(--gefs)");
+  return `<div class="pb-row">
+    <div class="pb-label">${label}</div>
+    <div class="pb-track"><div class="pb-fill" style="width:${w}%;background:${color}"></div></div>
+    <div class="pb-pct" style="color:${color}">${Math.round(pct)}%</div>
+  </div>`;
+}
+</script>
+</body>
+</html>

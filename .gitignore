@@ -1,0 +1,4 @@
+backend/meteograma/
+__pycache__/
+*.pyc
+.DS_Store
